@@ -1,0 +1,139 @@
+import java.io.*;
+import java.net.*;
+import java.util.*;
+import java.util.logging.Logger;
+
+public class TestClient {
+    private static final Logger LOGGER = Logger.getLogger(TestClient.class.getName());
+
+    public static void main(String[] args) {
+        Scanner scanner = new Scanner(System.in);
+        boolean running = true;
+        while (running) {
+            System.out.println("\n===== Food Delivery App - Client =====");
+            System.out.println("1. Search for stores\n2. Make a purchase\n3. Rate a store\n4. Exit");
+            String option = scanner.nextLine();
+            switch (option) {
+                case "1":
+                    searchStores(scanner);
+                    break;
+                case "2":
+                    makePurchase(scanner);
+                    break;
+                case "3":
+                    rateStore(scanner);
+                    break;
+                case "4":
+                    running = false;
+                    break;
+                default:
+                    System.out.println("Invalid option.");
+            }
+        }
+        scanner.close();
+    }
+
+    private static void searchStores(Scanner scanner) {
+        try {
+            System.out.print("Enter your latitude: ");
+            double latitude = Double.parseDouble(scanner.nextLine());
+            System.out.print("Enter your longitude: ");
+            double longitude = Double.parseDouble(scanner.nextLine());
+            System.out.print("Enter food categories (comma-separated): ");
+            List<String> foodCategories = Arrays.asList(scanner.nextLine().split(","));
+            System.out.print("Enter minimum stars (1-5): ");
+            int minStars = Integer.parseInt(scanner.nextLine());
+            System.out.print("Enter price category ($, $$, $$$, or 'any'): ");
+            String priceCategory = scanner.nextLine();
+            System.out.print("Enter search radius in km (default 5): ");
+            double radius = 5.0;
+            String radiusInput = scanner.nextLine();
+            if (!radiusInput.trim().isEmpty()) {
+                radius = Double.parseDouble(radiusInput);
+            }
+            MapReduceRequest request = new MapReduceRequest(latitude, longitude, foodCategories, minStars, priceCategory, radius);
+            sendToMaster("client", request);
+        } catch (NumberFormatException e) {
+            System.out.println("Invalid input format.");
+        }
+    }
+
+    private static void makePurchase(Scanner scanner) {
+        System.out.print("Enter store name: ");
+        String storeName = scanner.nextLine();
+        System.out.print("Enter your name: ");
+        String customerName = scanner.nextLine();
+        System.out.print("Enter your email: ");
+        String customerEmail = scanner.nextLine();
+        ArrayList<Product> purchaseProducts = new ArrayList<>();
+        boolean addingProducts = true;
+        while (addingProducts) {
+            System.out.print("Enter product name: ");
+            String productName = scanner.nextLine();
+            System.out.print("Enter product category: ");
+            String productCategory = scanner.nextLine();
+            System.out.print("Enter quantity: ");
+            int quantity = Integer.parseInt(scanner.nextLine());
+            System.out.print("Enter unit price: ");
+            double price = Double.parseDouble(scanner.nextLine());
+            if (quantity <= 0) {
+                System.out.println("Quantity must be positive.");
+                continue;
+            }
+            purchaseProducts.add(new Product(productName, productCategory, quantity, price));
+            System.out.print("Add another product? (y/n): ");
+            if (!scanner.nextLine().equalsIgnoreCase("y")) {
+                addingProducts = false;
+            }
+        }
+        Purchase purchase = new Purchase(customerName, customerEmail, new Date(), purchaseProducts);
+        Store dummyStore = new Store(storeName, 0.0, 0.0, "", 0, 0, "", new ArrayList<>());
+        sendToMaster("purchase", dummyStore, purchase);
+    }
+
+    private static void rateStore(Scanner scanner) {
+        System.out.print("Enter store name: ");
+        String storeName = scanner.nextLine();
+        System.out.print("Enter rating (1-5): ");
+        int rating = Integer.parseInt(scanner.nextLine());
+        if (rating < 1 || rating > 5) {
+            System.out.println("Rating must be between 1 and 5.");
+            return;
+        }
+        sendToMaster("rating", storeName, rating);
+    }
+
+    private static void sendToMaster(String role, Object... data) {
+        try (Socket socket = new Socket("localhost", 4321);
+             ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
+             ObjectInputStream in = new ObjectInputStream(socket.getInputStream())) {
+            out.writeObject(role);
+            out.flush();
+            for (Object obj : data) {
+                out.writeObject(obj);
+                out.flush();
+            }
+            Object result = in.readObject();
+            if (result instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, List<Store>> results = (Map<String, List<Store>>) result;
+                if (results.isEmpty()) {
+                    System.out.println("No stores found.");
+                } else {
+                    for (Map.Entry<String, List<Store>> entry : results.entrySet()) {
+                        System.out.println("\nCategory: " + entry.getKey());
+                        for (Store store : entry.getValue()) {
+                            System.out.println(store.toString());
+                        }
+                    }
+                }
+            } else {
+                System.out.println("Server response: " + result);
+            }
+            out.writeObject("Done");
+            out.flush();
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error communicating with Master", e);
+        }
+    }
+}
